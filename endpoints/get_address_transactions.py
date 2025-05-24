@@ -342,7 +342,7 @@ async def get_full_transactions_for_address_page(
     )
     if before:
         add_cache_control(None, before, response)
-    elif len(tx_ids) >= limit:
+    elif after and len(tx_ids) >= limit:
         max_block_time = max((r.get("block_time") for r in res))
         add_cache_control(None, max_block_time, response)
     return res
