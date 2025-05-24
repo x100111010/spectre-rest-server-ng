@@ -8,7 +8,9 @@ from fastapi import Response
 from pydantic import BaseModel
 from sqlalchemy import select, exists, func
 
+from constants import BPS
 from dbsession import async_session, async_session_blocks
+from endpoints.get_virtual_chain_blue_score import current_blue_score_data
 from helper.difficulty_calculation import bits_to_difficulty
 from helper.mining_address import (
     get_miner_payload_from_block,
@@ -243,8 +245,54 @@ async def get_blocks_from_bluescore(
     Lists blocks of a given blueScore
     """
     response.headers["X-Data-Source"] = "Database"
+
+    if (
+        blueScore < 0
+        or current_blue_score_data["blue_score"]
+        and current_blue_score_data["blue_score"] - blueScore < 0
+    ):
+        return []
+
     add_cache_control(blueScore, None, response)
 
+    # If the blue score is not older than 1 day, try looking up hashes and finding the blocks in spectred first
+    if (
+        current_blue_score_data["blue_score"]
+        and current_blue_score_data["blue_score"] - blueScore
+    ) / BPS < 86400:
+        async with async_session_blocks() as s:
+            block_hashes = (
+                (
+                    await s.execute(
+                        select(Block.hash).where(Block.blue_score == blueScore)
+                    )
+                )
+                .scalars()
+                .all()
+            )
+
+        if not block_hashes:
+            return []
+
+        result = []
+        for block_hash in block_hashes:
+            resp = await spectred_client.request(
+                "getBlockRequest",
+                params={"hash": block_hash, "includeTransactions": includeTransactions},
+            )
+            if (
+                not resp.get("getBlockResponse", {})
+                .get("block", {})
+                .get("verboseData", {})
+                .get("isHeaderOnly", True)
+            ):
+                result.append(
+                    resp["getBlockResponse"]["block"]
+                )  # Block found in spectred and is not headerOnly
+        if result:
+            return result
+
+    # Block hashes not found in spectred, look up blocks in the db instead
     async with async_session_blocks() as s:
         blocks = (
             await s.execute(block_join_query().where(Block.blue_score == blueScore))
@@ -252,11 +300,9 @@ async def get_blocks_from_bluescore(
 
     result = []
     for block, is_chain_block, parents, children, transaction_ids in blocks:
-        transactions = (
-            await get_transactions(block.hash, transaction_ids)
-            if includeTransactions and transaction_ids
-            else None
-        )
+        transactions = None
+        if includeTransactions and transaction_ids:
+            transactions = await get_transactions(block.hash, transaction_ids)
         result.append(
             map_block_from_db(
                 block, is_chain_block, parents, children, transaction_ids, transactions
