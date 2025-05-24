@@ -2,7 +2,7 @@
 
 from pydantic import BaseModel
 
-from helper.deflationary_table import DEFLATIONARY_TABLE
+from helper.deflationary_table import calc_block_reward
 from server import app, spectred_client
 
 
@@ -21,13 +21,8 @@ async def get_blockreward(stringOnly: bool = False):
     """
     resp = await spectred_client.request("getBlockDagInfoRequest")
     daa_score = int(resp["getBlockDagInfoResponse"]["virtualDaaScore"])
-
-    reward = 0
-
-    for to_break_score in sorted(DEFLATIONARY_TABLE):
-        reward = DEFLATIONARY_TABLE[to_break_score]
-        if daa_score < to_break_score:
-            break
+    reward_info = calc_block_reward(daa_score)
+    reward = reward_info["current"]
 
     if not stringOnly:
         return {"blockreward": reward}
