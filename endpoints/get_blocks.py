@@ -243,6 +243,7 @@ async def get_blocks_from_bluescore(
     Lists blocks of a given blueScore
     """
     response.headers["X-Data-Source"] = "Database"
+    add_cache_control(blueScore, None, response)
 
     async with async_session_blocks() as s:
         blocks = (
@@ -251,8 +252,6 @@ async def get_blocks_from_bluescore(
 
     result = []
     for block, is_chain_block, parents, children, transaction_ids in blocks:
-        if block:
-            add_cache_control(block.blue_score, block.timestamp, response)
         transactions = (
             await get_transactions(block.hash, transaction_ids)
             if includeTransactions and transaction_ids
